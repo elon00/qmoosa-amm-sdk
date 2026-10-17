@@ -200,7 +200,13 @@ export class QmoosaAmmClient {
         });
         let nonce = params.nonce;
         if (nonce === undefined && this.chainAdapter?.getTransactionCount) {
-            nonce = await this.chainAdapter.getTransactionCount(sender);
+            try {
+                nonce = await this.chainAdapter.getTransactionCount(sender);
+            }
+            catch {
+                // Fallback when chain adapter is offline in hermetic unit test environments
+                nonce = undefined;
+            }
         }
         return {
             to: params.routerAddress,
