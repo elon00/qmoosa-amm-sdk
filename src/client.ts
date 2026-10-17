@@ -3,6 +3,14 @@ import { MockWalletAdapter } from "./wallet.js";
 
 const BPS_DENOMINATOR = 10000n;
 
+function stringToHex(str: string): string {
+  let hex = "";
+  for (let i = 0; i < str.length; i++) {
+    hex += str.charCodeAt(i).toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
 export class QmoosaAmmClient {
   private config: Required<SdkConfig>;
   private wallet: WalletAdapter;
@@ -73,7 +81,7 @@ export class QmoosaAmmClient {
   public async signAndSendSwap(params: SwapTransactionParams): Promise<{ txHash: string; payload: any }> {
     const payload = await this.buildSwapPayload(params);
     const sig = await this.wallet.signTransaction(payload);
-    const txHash = `0x${Buffer.from(sig + Date.now()).toString("hex").substring(0, 64)}`;
+    const txHash = `0x${stringToHex(sig + Date.now().toString()).substring(0, 64)}`;
 
     return { txHash, payload };
   }

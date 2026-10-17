@@ -1,6 +1,6 @@
 {
   "name": "@qmoosa/amm-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Typed client library, RPC adapters, quote calculator, and wallet interface for Qmoosa AMM",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,6 +19,7 @@
   "author": "elon00",
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^20.11.0",
     "typescript": "^5.4.0"
   }
 }
