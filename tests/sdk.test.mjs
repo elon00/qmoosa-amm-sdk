@@ -6,6 +6,7 @@ import {
   WalletNotConnectedError,
   UnsupportedChainAdapterError,
   InvalidQuoteError,
+  AnvilLocalChainAdapter,
   utf8ToHex
 } from "../dist/index.js";
 import { MockWalletAdapter } from "../dist/testing/index.js";
@@ -229,5 +230,35 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
 
     assert.equal(receipt.txHash, "0x_verified_tx_hash_12345");
     assert.equal(receipt.status, "CONFIRMED");
+  });
+
+  test("AnvilLocalChainAdapter enforces local sandbox constraints and fails closed when offline", async () => {
+    // 1. Rejection of public mainnet chain IDs
+    assert.throws(
+      () => new AnvilLocalChainAdapter({ chainId: 1 }),
+      /INVALID_LOCAL_CHAIN_ID/
+    );
+    assert.throws(
+      () => new AnvilLocalChainAdapter({ chainId: 42161 }),
+      /INVALID_LOCAL_CHAIN_ID/
+    );
+
+    // 2. Default local anvil configuration
+    const adapter = new AnvilLocalChainAdapter();
+    assert.equal(adapter.chainId, 31337);
+    assert.equal(adapter.isLocalSandbox, true);
+
+    // 3. Rejection of malformed raw transaction payload
+    await assert.rejects(
+      () => adapter.broadcastTransaction("not-a-hex-string"),
+      /INVALID_RAW_TX_PAYLOAD/
+    );
+
+    // 4. Fail-closed behavior when local Anvil node is unreachable (zero fabricated receipts)
+    const deadAdapter = new AnvilLocalChainAdapter({ rpcUrl: "http://127.0.0.1:19999" });
+    await assert.rejects(
+      () => deadAdapter.broadcastTransaction("0x1234567890abcdef"),
+      /ANVIL_RPC_UNAVAILABLE/
+    );
   });
 });
