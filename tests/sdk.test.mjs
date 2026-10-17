@@ -1,17 +1,30 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import * as RootExport from "../dist/index.js";
 import {
   QmoosaAmmClient,
-  MockWalletAdapter,
   WalletNotConnectedError,
   UnsupportedChainAdapterError,
   InvalidQuoteError,
   utf8ToHex
 } from "../dist/index.js";
+import { MockWalletAdapter } from "../dist/testing/index.js";
 
 describe("AMM SDK Client & Fail-Closed Boundaries", () => {
   const rA = "10000000000000000000000"; // 10,000 Token A
   const rB = "20000000000000000000000"; // 20,000 Token B
+
+  test("Root package exports only production symbols, isolating MockWalletAdapter to testing module", () => {
+    assert.equal("MockWalletAdapter" in RootExport, false, "MockWalletAdapter must NOT be exported in root bundle");
+    assert.ok(MockWalletAdapter, "MockWalletAdapter must be accessible via testing submodule");
+  });
+
+  test("Constructor validates defaultSlippageBps bounds [1, 5000]", () => {
+    assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: 0 }), /SDK_INVALID_QUOTE/);
+    assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: 5001 }), /SDK_INVALID_QUOTE/);
+    const validClient = new QmoosaAmmClient({ defaultSlippageBps: 100 });
+    assert.ok(validClient);
+  });
 
   test("UTF-8 hex encoding accurately encodes ASCII and Unicode strings", () => {
     assert.equal(utf8ToHex("QMOOSA"), "514d4f4f5341");
@@ -30,6 +43,30 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
     assert.ok(BigInt(quote.expectedAmountOut) > 0n);
     assert.ok(BigInt(quote.minAmountOut) < BigInt(quote.expectedAmountOut));
     assert.equal(quote.priceImpactPercent >= 0, true);
+  });
+
+  test("Fee and slippage boundary validation in getQuote", async () => {
+    const client = new QmoosaAmmClient();
+
+    // Invalid fee bounds [1, 1000]
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", feeBps: 0 }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", feeBps: 1001 }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+
+    // Invalid slippage bounds [1, 5000]
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", slippageBps: 0 }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", slippageBps: 5001 }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
   });
 
   test("Zero or negative quote amounts are strictly rejected", async () => {

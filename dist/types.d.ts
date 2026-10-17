@@ -23,6 +23,7 @@ export interface QuoteRequest {
     tokenOut: string;
     amountIn: string;
     feeBps?: number;
+    slippageBps?: number;
 }
 export interface QuoteResponse {
     tokenIn: string;

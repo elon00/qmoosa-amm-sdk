@@ -4,6 +4,16 @@
   "description": "Typed client library, RPC adapters, quote calculator, and wallet interface for Qmoosa AMM",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
   "type": "module",
   "scripts": {
     "build": "tsc",

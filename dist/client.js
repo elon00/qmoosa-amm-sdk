@@ -17,8 +17,12 @@ export class QmoosaAmmClient {
     wallet = null;
     chainAdapter = null;
     constructor(config) {
+        const slippage = config?.defaultSlippageBps ?? 50;
+        if (slippage < 1 || slippage > 5000) {
+            throw new InvalidQuoteError("defaultSlippageBps must be between 1 and 5000 bps (0.01% - 50%)");
+        }
         this.config = {
-            defaultSlippageBps: config?.defaultSlippageBps ?? 50,
+            defaultSlippageBps: slippage,
             timeoutMs: config?.timeoutMs ?? 15000
         };
         if (config?.chainAdapter) {
@@ -46,6 +50,13 @@ export class QmoosaAmmClient {
         const rIn = BigInt(currentReserveIn);
         const rOut = BigInt(currentReserveOut);
         const feeBps = request.feeBps ?? 30;
+        if (feeBps < 1 || feeBps > 1000) {
+            throw new InvalidQuoteError("feeBps must be between 1 and 1000 bps (0.01% - 10%)");
+        }
+        const slippageBps = BigInt(request.slippageBps ?? this.config.defaultSlippageBps);
+        if (slippageBps < 1n || slippageBps > 5000n) {
+            throw new InvalidQuoteError("slippageBps must be between 1 and 5000 bps (0.01% - 50%)");
+        }
         if (amountIn <= 0n) {
             throw new InvalidQuoteError("amountIn must be strictly positive");
         }
@@ -57,7 +68,6 @@ export class QmoosaAmmClient {
         const numerator = amountInWithFee * rOut;
         const denominator = (rIn * BPS_DENOMINATOR) + amountInWithFee;
         const expectedOut = numerator / denominator;
-        const slippageBps = BigInt(this.config.defaultSlippageBps);
         const minOut = (expectedOut * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR;
         const feeAmount = (amountIn * BigInt(feeBps)) / BPS_DENOMINATOR;
         // Price impact percentage = (amountIn / (reserveIn + amountIn)) * 100
