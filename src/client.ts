@@ -1,31 +1,64 @@
-import { SdkConfig, WalletAdapter, QuoteRequest, QuoteResponse, SwapTransactionParams } from "./types.js";
-import { MockWalletAdapter } from "./wallet.js";
+import {
+  SdkConfig,
+  WalletAdapter,
+  ChainTransactionAdapter,
+  TransactionReceipt,
+  QuoteRequest,
+  QuoteResponse,
+  SwapTransactionParams
+} from "./types.js";
+import {
+  WalletNotConnectedError,
+  UnsupportedChainAdapterError,
+  InvalidQuoteError
+} from "./errors.js";
 
 const BPS_DENOMINATOR = 10000n;
 
-function stringToHex(str: string): string {
+/**
+ * Standard cross-platform UTF-8 string to hexadecimal encoder.
+ */
+export function utf8ToHex(str: string): string {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(str);
   let hex = "";
-  for (let i = 0; i < str.length; i++) {
-    hex += str.charCodeAt(i).toString(16).padStart(2, "0");
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
   }
   return hex;
 }
 
 export class QmoosaAmmClient {
-  private config: Required<SdkConfig>;
-  private wallet: WalletAdapter;
+  private config: { defaultSlippageBps: number; timeoutMs: number };
+  private wallet: WalletAdapter | null = null;
+  private chainAdapter: ChainTransactionAdapter | null = null;
 
-  constructor(config?: SdkConfig, wallet?: WalletAdapter) {
+  constructor(config?: SdkConfig) {
     this.config = {
-      rpcEndpoint: config?.rpcEndpoint || "http://localhost:8545",
       defaultSlippageBps: config?.defaultSlippageBps ?? 50,
       timeoutMs: config?.timeoutMs ?? 15000
     };
-    this.wallet = wallet || new MockWalletAdapter();
+    if (config?.chainAdapter) {
+      this.chainAdapter = config.chainAdapter;
+    }
   }
 
   public setWallet(wallet: WalletAdapter): void {
+    if (!wallet) throw new Error("Wallet adapter cannot be null or undefined");
     this.wallet = wallet;
+  }
+
+  public setChainAdapter(adapter: ChainTransactionAdapter): void {
+    if (!adapter) throw new Error("Chain adapter cannot be null or undefined");
+    this.chainAdapter = adapter;
+  }
+
+  public hasWallet(): boolean {
+    return this.wallet !== null;
+  }
+
+  public hasChainAdapter(): boolean {
+    return this.chainAdapter !== null;
   }
 
   public async getQuote(request: QuoteRequest, currentReserveIn: string, currentReserveOut: string): Promise<QuoteResponse> {
@@ -33,6 +66,13 @@ export class QmoosaAmmClient {
     const rIn = BigInt(currentReserveIn);
     const rOut = BigInt(currentReserveOut);
     const feeBps = request.feeBps ?? 30;
+
+    if (amountIn <= 0n) {
+      throw new InvalidQuoteError("amountIn must be strictly positive");
+    }
+    if (rIn <= 0n || rOut <= 0n) {
+      throw new InvalidQuoteError("Reserves must be strictly positive");
+    }
 
     const feeNumerator = BPS_DENOMINATOR - BigInt(feeBps);
     const amountInWithFee = amountIn * feeNumerator;
@@ -45,7 +85,7 @@ export class QmoosaAmmClient {
 
     const feeAmount = (amountIn * BigInt(feeBps)) / BPS_DENOMINATOR;
 
-    // Price impact = (amountIn / (reserveIn + amountIn)) * 100
+    // Price impact percentage = (amountIn / (reserveIn + amountIn)) * 100
     const impactNum = Number(amountIn) * 100;
     const impactDenom = Number(rIn + amountIn);
     const priceImpact = impactDenom > 0 ? Number((impactNum / impactDenom).toFixed(2)) : 0;
@@ -62,6 +102,9 @@ export class QmoosaAmmClient {
   }
 
   public async buildSwapPayload(params: SwapTransactionParams): Promise<any> {
+    if (!this.wallet) {
+      throw new WalletNotConnectedError();
+    }
     const sender = await this.wallet.getAddress();
     const deadline = Date.now() + ((params.deadlineMinutes ?? 10) * 60 * 1000);
 
@@ -78,11 +121,30 @@ export class QmoosaAmmClient {
     };
   }
 
-  public async signAndSendSwap(params: SwapTransactionParams): Promise<{ txHash: string; payload: any }> {
-    const payload = await this.buildSwapPayload(params);
-    const sig = await this.wallet.signTransaction(payload);
-    const txHash = `0x${stringToHex(sig + Date.now().toString()).substring(0, 64)}`;
+  /**
+   * Signs and broadcasts swap transaction to the configured chain adapter.
+   * Fails closed with typed error if no chain adapter is configured.
+   * Does NOT manufacture fake transaction hashes.
+   */
+  public async signAndSendSwap(params: SwapTransactionParams): Promise<TransactionReceipt> {
+    if (!this.wallet) {
+      throw new WalletNotConnectedError();
+    }
+    if (!this.chainAdapter) {
+      throw new UnsupportedChainAdapterError(
+        "Cannot broadcast transaction: No ChainTransactionAdapter is configured. Operation failed closed to prevent false production signals."
+      );
+    }
 
-    return { txHash, payload };
+    const payload = await this.buildSwapPayload(params);
+    const signature = await this.wallet.signTransaction(payload);
+    
+    const signedTx = {
+      payload,
+      signature
+    };
+
+    // Actual broadcast via chain adapter
+    return await this.chainAdapter.broadcastTransaction(signedTx);
   }
 }

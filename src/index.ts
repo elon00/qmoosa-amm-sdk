@@ -1,3 +1,4 @@
 export * from "./types.js";
-export * from "./wallet.js";
+export * from "./errors.js";
 export * from "./client.js";
+export * from "./testing/mock-wallet.js";

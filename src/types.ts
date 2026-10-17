@@ -1,12 +1,25 @@
 export interface SdkConfig {
-  rpcEndpoint?: string;
   defaultSlippageBps?: number; // default 50 bps (0.5%)
   timeoutMs?: number;
+  chainAdapter?: ChainTransactionAdapter;
 }
 
 export interface WalletAdapter {
   getAddress(): Promise<string>;
   signTransaction(txPayload: any): Promise<string>;
+}
+
+export interface TransactionReceipt {
+  txHash: string;
+  blockNumber: number;
+  status: "CONFIRMED" | "FAILED";
+  timestamp: number;
+  explorerUrl?: string;
+}
+
+export interface ChainTransactionAdapter {
+  broadcastTransaction(signedTxPayload: any): Promise<TransactionReceipt>;
+  getTransactionReceipt(txHash: string): Promise<TransactionReceipt | null>;
 }
 
 export interface QuoteRequest {

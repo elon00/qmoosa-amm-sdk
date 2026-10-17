@@ -1,13 +1,14 @@
 {
   "name": "@qmoosa/amm-sdk",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Typed client library, RPC adapters, quote calculator, and wallet interface for Qmoosa AMM",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "node -e \"console.log('AMM SDK client interface test passed.')\"",
-    "lint": "node -e \"console.log('SDK lint passed.')\""
+    "test": "npm run build && node --test tests/sdk.test.mjs",
+    "lint": "tsc --noEmit"
   },
   "keywords": [
     "amm",
