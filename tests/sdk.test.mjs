@@ -9,7 +9,7 @@ import {
   AnvilLocalChainAdapter,
   utf8ToHex
 } from "../dist/index.js";
-import { MockWalletAdapter } from "../dist/testing/index.js";
+import { MockWalletAdapter, AnvilTestWallet } from "../dist/testing/index.js";
 
 describe("AMM SDK Client & Fail-Closed Boundaries", () => {
   const rA = "10000000000000000000000"; // 10,000 Token A
@@ -248,17 +248,53 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
     assert.equal(adapter.chainId, 31337);
     assert.equal(adapter.isLocalSandbox, true);
 
-    // 3. Rejection of malformed raw transaction payload
+    // 3. Rejection of non-loopback endpoints
+    assert.throws(
+      () => new AnvilLocalChainAdapter({ rpcUrl: "https://mainnet.infura.io/v3/fake" }),
+      /NON_LOOPBACK_RPC_FORBIDDEN/
+    );
+    assert.throws(
+      () => new AnvilLocalChainAdapter({ rpcUrl: "http://192.168.1.50:8545" }),
+      /NON_LOOPBACK_RPC_FORBIDDEN/
+    );
+
+    // 4. Rejection of malformed raw transaction payload
     await assert.rejects(
       () => adapter.broadcastTransaction("not-a-hex-string"),
       /INVALID_RAW_TX_PAYLOAD/
     );
 
-    // 4. Fail-closed behavior when local Anvil node is unreachable (zero fabricated receipts)
+    // 5. Fail-closed behavior when local Anvil node is unreachable (zero fabricated receipts)
     const deadAdapter = new AnvilLocalChainAdapter({ rpcUrl: "http://127.0.0.1:19999" });
     await assert.rejects(
       () => deadAdapter.broadcastTransaction("0x1234567890abcdef"),
       /ANVIL_RPC_UNAVAILABLE/
     );
+  });
+
+  test("AnvilTestWallet and buildEvmSwapTransaction prepare valid EIP-1559 signed transactions", async () => {
+    const wallet = new AnvilTestWallet();
+    const address = await wallet.getAddress();
+    assert.equal(address.toLowerCase(), "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+
+    const client = new QmoosaAmmClient({ chainAdapter: new AnvilLocalChainAdapter() }, wallet);
+
+    const evmTx = await client.buildEvmSwapTransaction({
+      routerAddress: "0x1111111111111111111111111111111111111111",
+      tokenIn: "0x2222222222222222222222222222222222222222",
+      tokenOut: "0x3333333333333333333333333333333333333333",
+      amountIn: "1000000",
+      minAmountOut: "990000",
+      deadlineMinutes: 15
+    });
+
+    assert.equal(evmTx.to, "0x1111111111111111111111111111111111111111");
+    assert.equal(evmTx.chainId, 31337);
+    // swapExactTokensForTokens selector is 0x38ed1739
+    assert.ok(evmTx.data.startsWith("0x38ed1739"));
+
+    const signedRawTx = await wallet.signTransaction(evmTx);
+    assert.ok(typeof signedRawTx === "string");
+    assert.ok(signedRawTx.startsWith("0x02")); // EIP-1559 type 2 transaction
   });
 });

@@ -5,7 +5,8 @@ import {
   TransactionReceipt,
   QuoteRequest,
   QuoteResponse,
-  SwapTransactionParams
+  SwapTransactionParams,
+  EvmTransactionRequest
 } from "./types.js";
 import {
   SdkError,
@@ -13,6 +14,25 @@ import {
   UnsupportedChainAdapterError,
   InvalidQuoteError
 } from "./errors.js";
+import { encodeFunctionData } from "viem";
+
+export const ROUTER_SWAP_ABI = [
+  {
+    type: "function",
+    name: "swapExactTokensForTokens",
+    inputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "amountOutMin", type: "uint256" },
+      { name: "path", type: "address[]" },
+      { name: "to", type: "address" },
+      { name: "deadline", type: "uint256" }
+    ],
+    outputs: [
+      { name: "amounts", type: "uint256[]" }
+    ],
+    stateMutability: "nonpayable"
+  }
+] as const;
 
 const BPS_DENOMINATOR = 10000n;
 
@@ -34,7 +54,7 @@ export class QmoosaAmmClient {
   private wallet: WalletAdapter | null = null;
   private chainAdapter: ChainTransactionAdapter | null = null;
 
-  constructor(config?: SdkConfig) {
+  constructor(config?: SdkConfig, wallet?: WalletAdapter) {
     const slippage = config?.defaultSlippageBps ?? 50;
     if (
       typeof slippage !== "number" ||
@@ -57,6 +77,9 @@ export class QmoosaAmmClient {
     };
     if (config?.chainAdapter) {
       this.chainAdapter = config.chainAdapter;
+    }
+    if (wallet) {
+      this.setWallet(wallet);
     }
   }
 
@@ -193,6 +216,49 @@ export class QmoosaAmmClient {
     };
   }
 
+  public async buildEvmSwapTransaction(
+    params: SwapTransactionParams & { routerAddress: string; nonce?: number }
+  ): Promise<EvmTransactionRequest> {
+    if (!this.wallet) {
+      throw new WalletNotConnectedError();
+    }
+    if (!params.routerAddress || !params.routerAddress.startsWith("0x")) {
+      throw new InvalidQuoteError("routerAddress must be a valid 0x address");
+    }
+    if (!params.tokenIn || !params.tokenOut) {
+      throw new InvalidQuoteError("tokenIn and tokenOut must be specified");
+    }
+    if (typeof params.amountIn !== "string" || !/^\d+$/.test(params.amountIn.trim()) || BigInt(params.amountIn.trim()) <= 0n) {
+      throw new InvalidQuoteError("amountIn must be a positive integer base unit string");
+    }
+    if (typeof params.minAmountOut !== "string" || !/^\d+$/.test(params.minAmountOut.trim())) {
+      throw new InvalidQuoteError("minAmountOut must be a non-negative integer base unit string");
+    }
+
+    const sender = (await this.wallet.getAddress()) as `0x${string}`;
+    const to = ((params.recipient && params.recipient.startsWith("0x")) ? params.recipient : sender) as `0x${string}`;
+    const tokenIn = params.tokenIn.trim() as `0x${string}`;
+    const tokenOut = params.tokenOut.trim() as `0x${string}`;
+    const amountIn = BigInt(params.amountIn.trim());
+    const minAmountOut = BigInt(params.minAmountOut.trim());
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + ((params.deadlineMinutes ?? 10) * 60));
+
+    const data = encodeFunctionData({
+      abi: ROUTER_SWAP_ABI,
+      functionName: "swapExactTokensForTokens",
+      args: [amountIn, minAmountOut, [tokenIn, tokenOut], to, deadline]
+    });
+
+    return {
+      to: params.routerAddress as `0x${string}`,
+      data,
+      value: 0n,
+      nonce: params.nonce,
+      gas: 500000n,
+      chainId: 31337
+    };
+  }
+
   /**
    * Signs and broadcasts swap transaction to the configured chain adapter.
    * Fails closed with typed error if no chain adapter is configured.
@@ -206,6 +272,16 @@ export class QmoosaAmmClient {
       throw new UnsupportedChainAdapterError(
         "Cannot broadcast transaction: No ChainTransactionAdapter is configured. Operation failed closed to prevent false production signals."
       );
+    }
+
+    // If routerAddress is provided, execute genuine on-chain EVM transaction
+    if (params.routerAddress && params.routerAddress.startsWith("0x")) {
+      const evmTx = await this.buildEvmSwapTransaction({
+        ...params,
+        routerAddress: params.routerAddress
+      });
+      const signedRawTx = await this.wallet.signTransaction(evmTx);
+      return await this.chainAdapter.broadcastTransaction(signedRawTx);
     }
 
     const payload = await this.buildSwapPayload(params);

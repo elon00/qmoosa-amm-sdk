@@ -4,15 +4,28 @@ export interface SdkConfig {
   chainAdapter?: ChainTransactionAdapter;
 }
 
+export interface EvmTransactionRequest {
+  to: `0x${string}`;
+  data: `0x${string}`;
+  value?: bigint;
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+  chainId?: number;
+}
+
 export interface WalletAdapter {
   getAddress(): Promise<string>;
   signTransaction(txPayload: any): Promise<string>;
+  signRawTransaction?(tx: EvmTransactionRequest): Promise<`0x${string}`>;
 }
 
 export interface TransactionReceipt {
   txHash: string;
   blockNumber: number;
   status: "CONFIRMED" | "FAILED";
+  gasUsed?: string;
   timestamp: number;
   explorerUrl?: string;
 }
@@ -20,6 +33,8 @@ export interface TransactionReceipt {
 export interface ChainTransactionAdapter {
   broadcastTransaction(signedTxPayload: any): Promise<TransactionReceipt>;
   getTransactionReceipt(txHash: string): Promise<TransactionReceipt | null>;
+  verifyNetwork?(): Promise<number>;
+  verifyContractCode?(address: string, expectedBytecodePrefix?: string): Promise<string>;
 }
 
 export interface QuoteRequest {
@@ -47,4 +62,5 @@ export interface SwapTransactionParams {
   minAmountOut: string;
   recipient?: string;
   deadlineMinutes?: number;
+  routerAddress?: string;
 }
