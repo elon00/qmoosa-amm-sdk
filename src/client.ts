@@ -8,6 +8,7 @@ import {
   SwapTransactionParams
 } from "./types.js";
 import {
+  SdkError,
   WalletNotConnectedError,
   UnsupportedChainAdapterError,
   InvalidQuoteError
@@ -35,12 +36,24 @@ export class QmoosaAmmClient {
 
   constructor(config?: SdkConfig) {
     const slippage = config?.defaultSlippageBps ?? 50;
-    if (slippage < 1 || slippage > 5000) {
-      throw new InvalidQuoteError("defaultSlippageBps must be between 1 and 5000 bps (0.01% - 50%)");
+    if (
+      typeof slippage !== "number" ||
+      !Number.isFinite(slippage) ||
+      !Number.isInteger(slippage) ||
+      slippage < 1 ||
+      slippage > 5000
+    ) {
+      throw new InvalidQuoteError("defaultSlippageBps must be a finite integer between 1 and 5000 bps (0.01% - 50%)");
     }
+
+    const timeout = config?.timeoutMs ?? 15000;
+    if (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout <= 0) {
+      throw new SdkError("SDK_INVALID_CONFIG", "timeoutMs must be a positive finite number");
+    }
+
     this.config = {
       defaultSlippageBps: slippage,
-      timeoutMs: config?.timeoutMs ?? 15000
+      timeoutMs: timeout
     };
     if (config?.chainAdapter) {
       this.chainAdapter = config.chainAdapter;
@@ -66,19 +79,31 @@ export class QmoosaAmmClient {
   }
 
   public async getQuote(request: QuoteRequest, currentReserveIn: string, currentReserveOut: string): Promise<QuoteResponse> {
-    const amountIn = BigInt(request.amountIn);
-    const rIn = BigInt(currentReserveIn);
-    const rOut = BigInt(currentReserveOut);
-    const feeBps = request.feeBps ?? 30;
-
-    if (feeBps < 1 || feeBps > 1000) {
-      throw new InvalidQuoteError("feeBps must be between 1 and 1000 bps (0.01% - 10%)");
+    if (!request || typeof request !== "object") {
+      throw new InvalidQuoteError("QuoteRequest must be an object");
     }
 
-    const slippageBps = BigInt(request.slippageBps ?? this.config.defaultSlippageBps);
-    if (slippageBps < 1n || slippageBps > 5000n) {
-      throw new InvalidQuoteError("slippageBps must be between 1 and 5000 bps (0.01% - 50%)");
+    if (!request.tokenIn || typeof request.tokenIn !== "string" || request.tokenIn.trim().length === 0) {
+      throw new InvalidQuoteError("tokenIn must be a non-empty string");
     }
+    if (!request.tokenOut || typeof request.tokenOut !== "string" || request.tokenOut.trim().length === 0) {
+      throw new InvalidQuoteError("tokenOut must be a non-empty string");
+    }
+
+    if (typeof request.amountIn !== "string" || !/^\d+$/.test(request.amountIn.trim())) {
+      throw new InvalidQuoteError("amountIn must be a positive integer base unit string without decimals or exponents");
+    }
+
+    if (typeof currentReserveIn !== "string" || !/^\d+$/.test(currentReserveIn.trim())) {
+      throw new InvalidQuoteError("currentReserveIn must be a positive integer base unit string");
+    }
+    if (typeof currentReserveOut !== "string" || !/^\d+$/.test(currentReserveOut.trim())) {
+      throw new InvalidQuoteError("currentReserveOut must be a positive integer base unit string");
+    }
+
+    const amountIn = BigInt(request.amountIn.trim());
+    const rIn = BigInt(currentReserveIn.trim());
+    const rOut = BigInt(currentReserveOut.trim());
 
     if (amountIn <= 0n) {
       throw new InvalidQuoteError("amountIn must be strictly positive");
@@ -87,6 +112,29 @@ export class QmoosaAmmClient {
       throw new InvalidQuoteError("Reserves must be strictly positive");
     }
 
+    const feeBps = request.feeBps ?? 30;
+    if (
+      typeof feeBps !== "number" ||
+      !Number.isFinite(feeBps) ||
+      !Number.isInteger(feeBps) ||
+      feeBps < 1 ||
+      feeBps > 1000
+    ) {
+      throw new InvalidQuoteError("feeBps must be a finite integer between 1 and 1000 bps (0.01% - 10%)");
+    }
+
+    const rawSlippage = request.slippageBps ?? this.config.defaultSlippageBps;
+    if (
+      typeof rawSlippage !== "number" ||
+      !Number.isFinite(rawSlippage) ||
+      !Number.isInteger(rawSlippage) ||
+      rawSlippage < 1 ||
+      rawSlippage > 5000
+    ) {
+      throw new InvalidQuoteError("slippageBps must be a finite integer between 1 and 5000 bps (0.01% - 50%)");
+    }
+    const slippageBps = BigInt(rawSlippage);
+
     const feeNumerator = BPS_DENOMINATOR - BigInt(feeBps);
     const amountInWithFee = amountIn * feeNumerator;
     const numerator = amountInWithFee * rOut;
@@ -94,21 +142,20 @@ export class QmoosaAmmClient {
     const expectedOut = numerator / denominator;
 
     const minOut = (expectedOut * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR;
-
     const feeAmount = (amountIn * BigInt(feeBps)) / BPS_DENOMINATOR;
 
-    // Price impact percentage = (amountIn / (reserveIn + amountIn)) * 100
-    const impactNum = Number(amountIn) * 100;
-    const impactDenom = Number(rIn + amountIn);
-    const priceImpact = impactDenom > 0 ? Number((impactNum / impactDenom).toFixed(2)) : 0;
+    // Price impact calculation using exact integer arithmetic (scaled to 10000 basis points)
+    // priceImpactBps = (amountIn * 10000) / (rIn + amountIn)
+    const priceImpactBps = (amountIn * 10000n) / (rIn + amountIn);
+    const priceImpactPercent = Number(priceImpactBps) / 100;
 
     return {
-      tokenIn: request.tokenIn,
-      tokenOut: request.tokenOut,
-      amountIn: request.amountIn,
+      tokenIn: request.tokenIn.trim(),
+      tokenOut: request.tokenOut.trim(),
+      amountIn: amountIn.toString(),
       expectedAmountOut: expectedOut.toString(),
       minAmountOut: minOut.toString(),
-      priceImpactPercent: priceImpact,
+      priceImpactPercent,
       feeAmount: feeAmount.toString()
     };
   }
@@ -117,15 +164,28 @@ export class QmoosaAmmClient {
     if (!this.wallet) {
       throw new WalletNotConnectedError();
     }
+    if (!params || typeof params !== "object") {
+      throw new InvalidQuoteError("SwapTransactionParams must be an object");
+    }
+    if (!params.tokenIn || !params.tokenOut) {
+      throw new InvalidQuoteError("tokenIn and tokenOut must be specified");
+    }
+    if (typeof params.amountIn !== "string" || !/^\d+$/.test(params.amountIn.trim()) || BigInt(params.amountIn.trim()) <= 0n) {
+      throw new InvalidQuoteError("amountIn must be a positive integer base unit string");
+    }
+    if (typeof params.minAmountOut !== "string" || !/^\d+$/.test(params.minAmountOut.trim())) {
+      throw new InvalidQuoteError("minAmountOut must be a non-negative integer base unit string");
+    }
+
     const sender = await this.wallet.getAddress();
     const deadline = Date.now() + ((params.deadlineMinutes ?? 10) * 60 * 1000);
 
     return {
       action: "SWAP_EXACT_IN",
-      tokenIn: params.tokenIn,
-      tokenOut: params.tokenOut,
-      amountIn: params.amountIn,
-      minAmountOut: params.minAmountOut,
+      tokenIn: params.tokenIn.trim(),
+      tokenOut: params.tokenOut.trim(),
+      amountIn: params.amountIn.trim(),
+      minAmountOut: params.minAmountOut.trim(),
       sender,
       recipient: params.recipient || sender,
       deadline,

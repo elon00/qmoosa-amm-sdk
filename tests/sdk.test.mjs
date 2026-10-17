@@ -19,9 +19,15 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
     assert.ok(MockWalletAdapter, "MockWalletAdapter must be accessible via testing submodule");
   });
 
-  test("Constructor validates defaultSlippageBps bounds [1, 5000]", () => {
+  test("Constructor validates defaultSlippageBps: rejects non-finite, fractional, or out-of-range values", () => {
     assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: 0 }), /SDK_INVALID_QUOTE/);
     assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: 5001 }), /SDK_INVALID_QUOTE/);
+    assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: NaN }), /SDK_INVALID_QUOTE/);
+    assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: Infinity }), /SDK_INVALID_QUOTE/);
+    assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: -Infinity }), /SDK_INVALID_QUOTE/);
+    assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: 50.5 }), /SDK_INVALID_QUOTE/);
+    assert.throws(() => new QmoosaAmmClient({ defaultSlippageBps: "50" }), /SDK_INVALID_QUOTE/);
+
     const validClient = new QmoosaAmmClient({ defaultSlippageBps: 100 });
     assert.ok(validClient);
   });
@@ -45,10 +51,10 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
     assert.equal(quote.priceImpactPercent >= 0, true);
   });
 
-  test("Fee and slippage boundary validation in getQuote", async () => {
+  test("Strict finite-integer validation for feeBps and slippageBps in getQuote", async () => {
     const client = new QmoosaAmmClient();
 
-    // Invalid fee bounds [1, 1000]
+    // Out of range or non-finite feeBps
     await assert.rejects(
       () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", feeBps: 0 }, rA, rB),
       /SDK_INVALID_QUOTE/
@@ -57,8 +63,20 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
       () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", feeBps: 1001 }, rA, rB),
       /SDK_INVALID_QUOTE/
     );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", feeBps: NaN }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", feeBps: Infinity }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", feeBps: 30.5 }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
 
-    // Invalid slippage bounds [1, 5000]
+    // Out of range or non-finite slippageBps
     await assert.rejects(
       () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", slippageBps: 0 }, rA, rB),
       /SDK_INVALID_QUOTE/
@@ -67,12 +85,56 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
       () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", slippageBps: 5001 }, rA, rB),
       /SDK_INVALID_QUOTE/
     );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", slippageBps: NaN }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", slippageBps: Infinity }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000", slippageBps: 50.25 }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
   });
 
-  test("Zero or negative quote amounts are strictly rejected", async () => {
+  test("Malformed or non-integer financial amounts in getQuote are strictly rejected", async () => {
     const client = new QmoosaAmmClient();
+
+    // Scientific notation
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1e3" }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    // Negative values
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "-100" }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    // Decimals in base units
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "100.5" }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    // Zero value
     await assert.rejects(
       () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "0" }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+    // Alphabetic characters
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "abc" }, rA, rB),
+      /SDK_INVALID_QUOTE/
+    );
+
+    // Malformed reserves
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000" }, "0", rB),
+      /SDK_INVALID_QUOTE/
+    );
+    await assert.rejects(
+      () => client.getQuote({ tokenIn: "USDC", tokenOut: "ETH", amountIn: "1000" }, rA, "1e18"),
       /SDK_INVALID_QUOTE/
     );
   });
@@ -89,6 +151,31 @@ describe("AMM SDK Client & Fail-Closed Boundaries", () => {
         minAmountOut: "990"
       }),
       (err) => err instanceof WalletNotConnectedError
+    );
+  });
+
+  test("Client validates swap payload parameters before submission", async () => {
+    const client = new QmoosaAmmClient();
+    client.setWallet(new MockWalletAdapter());
+
+    await assert.rejects(
+      () => client.buildSwapPayload({
+        tokenIn: "",
+        tokenOut: "ETH",
+        amountIn: "1000",
+        minAmountOut: "990"
+      }),
+      /SDK_INVALID_QUOTE/
+    );
+
+    await assert.rejects(
+      () => client.buildSwapPayload({
+        tokenIn: "USDC",
+        tokenOut: "ETH",
+        amountIn: "1e3",
+        minAmountOut: "990"
+      }),
+      /SDK_INVALID_QUOTE/
     );
   });
 
