@@ -33,6 +33,7 @@ export interface TransactionReceipt {
 export interface ChainTransactionAdapter {
   broadcastTransaction(signedTxPayload: any): Promise<TransactionReceipt>;
   getTransactionReceipt(txHash: string): Promise<TransactionReceipt | null>;
+  getTransactionCount?(address: string): Promise<number>;
   verifyNetwork?(): Promise<number>;
   verifyContractCode?(address: string, expectedBytecodePrefix?: string): Promise<string>;
 }
@@ -63,4 +64,5 @@ export interface SwapTransactionParams {
   recipient?: string;
   deadlineMinutes?: number;
   routerAddress?: string;
+  nonce?: number;
 }

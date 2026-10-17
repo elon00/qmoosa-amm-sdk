@@ -198,11 +198,15 @@ export class QmoosaAmmClient {
             functionName: "swapExactTokensForTokens",
             args: [amountIn, minAmountOut, [tokenIn, tokenOut], to, deadline]
         });
+        let nonce = params.nonce;
+        if (nonce === undefined && this.chainAdapter?.getTransactionCount) {
+            nonce = await this.chainAdapter.getTransactionCount(sender);
+        }
         return {
             to: params.routerAddress,
             data,
             value: 0n,
-            nonce: params.nonce,
+            nonce,
             gas: 500000n,
             chainId: 31337
         };

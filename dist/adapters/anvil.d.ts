@@ -35,6 +35,10 @@ export declare class AnvilLocalChainAdapter implements ChainTransactionAdapter {
      */
     broadcastTransaction(signedTxPayload: any): Promise<TransactionReceipt>;
     /**
+     * Retrieves the current transaction count (nonce) for an address on Anvil.
+     */
+    getTransactionCount(address: string): Promise<number>;
+    /**
      * Polls local Anvil for transaction receipt and parses status and logs.
      */
     getTransactionReceipt(txHash: string): Promise<TransactionReceipt | null>;

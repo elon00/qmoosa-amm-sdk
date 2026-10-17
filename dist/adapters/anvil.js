@@ -124,6 +124,13 @@ export class AnvilLocalChainAdapter {
         return receipt;
     }
     /**
+     * Retrieves the current transaction count (nonce) for an address on Anvil.
+     */
+    async getTransactionCount(address) {
+        const rawCount = await this.callRpc("eth_getTransactionCount", [address, "pending"]);
+        return typeof rawCount === "string" ? parseInt(rawCount, 16) : Number(rawCount);
+    }
+    /**
      * Polls local Anvil for transaction receipt and parses status and logs.
      */
     async getTransactionReceipt(txHash) {
